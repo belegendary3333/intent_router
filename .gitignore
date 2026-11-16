@@ -1,0 +1,57 @@
+# Python environments and caches
+.venv/
+.venv-*/
+venv/
+env/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.uv-cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Local configuration and credentials; keep the documented template
+.env
+.env.*
+!.env.example
+
+# Model weights (download with the setup scripts)
+/model/
+*.onnx
+*.onnx_data
+*.safetensors
+*.pt
+*.pth
+
+# Generated reports, logs, private corpora, and backups
+/analysis_output/
+/analysis_lab/private/
+/logs/
+/lab_backups/
+/.codex_backups/
+/.offline-site/
+*.log
+*.pid
+*.tgz
+# Temporary session database created by the local test stack
+:memory:.ses
+
+# Historical deployment copies contain machine-specific configuration
+/archive/
+
+# Build and package output
+/build/
+/dist/
+*.egg-info/
+
+# Editor and OS files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
