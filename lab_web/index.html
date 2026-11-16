@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="本地 BGE 意图分析：交互 t-SNE、代表锚点、易混淆句和独立测试报告。">
+  <title>Intent Router · 本地分析台</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script defer src="/vendor/plotly.min.js"></script>
+  <script defer src="/static/app.js"></script>
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand"><span class="brand-mark" aria-hidden="true">IR</span><div><h1>Intent Router <span>分析台</span></h1><p>BGE · 本地离线推理 · 不执行机器人动作</p></div></div>
+    <div class="header-meta"><span class="offline-dot" aria-hidden="true"></span><span id="model-meta">small / large · 准备模型</span><span class="local-label">LOCAL</span></div>
+  </header>
+  <main>
+    <div id="status" class="status" role="status" aria-live="polite">正在准备案例和模型…</div>
+    <div id="error" class="error" role="alert" hidden></div>
+    <section class="workspace" aria-label="句子分析与意图分布">
+      <aside class="console">
+        <div class="section-heading"><h2>发送测试句</h2><span class="small">每行一句，最多 20 句</span></div>
+        <form id="message-form">
+          <label for="message">原句</label>
+          <textarea id="message" rows="5" maxlength="5140" placeholder="周杰伦有什么代表作？&#10;小诺，给我唱首歌&#10;帮我把桌子擦干净"></textarea>
+          <label for="expected">期望意图 <span class="small">可选，用于探针测试统计</span></label>
+          <select id="expected"><option value="">未标注，只分析</option><option value="chat">聊天</option><option value="skill">任务</option><option value="singing">唱歌</option><option value="dancing">跳舞</option><option value="focus">专注模式</option></select>
+          <button id="send" class="primary" disabled>发送并分析</button>
+        </form>
+        <p class="help">新句是探针，不自动入库。未提供期望意图时，不计算它的准确率。</p>
+        <div id="probe-result" aria-live="polite"><div class="empty">发送句子后，对比向量方案与轻量分类器；分类器不确定时显示“需澄清”。</div></div>
+        <section id="feedback-editor" class="feedback-editor" hidden aria-label="人工纠错归档">
+          <h3>判错了？确认标签并归档</h3><p id="feedback-text" class="small"></p>
+          <form id="feedback-form">
+            <label for="feedback-mode">正确意图（由你确认）</label><select id="feedback-mode" required><option value="">请选择，不采用模型预测</option><option value="chat">聊天</option><option value="skill">任务</option><option value="singing">唱歌</option><option value="dancing">跳舞</option><option value="focus">专注模式</option></select>
+            <label for="feedback-split">归档集合（保存后不可换集合）</label><select id="feedback-split"><option value="train">训练：用于学习</option><option value="validation">验证：用于调参数</option><option value="test">回归留出：只评测，不训练</option></select>
+            <label for="feedback-source">原句来源</label><select id="feedback-source"><option value="manual">手动输入（非真实 ASR）</option><option value="asr">真实 ASR 转写（由我确认）</option></select>
+            <label for="feedback-family">会话 / 表达家族 ID <span class="small">相近改写须相同</span></label><input id="feedback-family" maxlength="100" placeholder="不填时每句独立；相近改写请填同一 ID">
+            <button id="save-feedback" type="submit">确认标签并归档</button>
+          </form>
+          <p id="feedback-editor-note" class="help">归档不会立即改变分类器。回归留出已看过预测，不是新盲测；固定测试句不能用于纠错训练。</p>
+        </section>
+        <details id="history"><summary>已发送句子 <span id="history-count">0</span></summary><div id="history-list"></div></details>
+      </aside>
+      <section class="distribution">
+        <div class="chart-heading"><div><h2>意图向量分布</h2><p id="plot-meta" class="small">五类联合 t-SNE · 悬停看原句，点击看详情</p></div><div id="legend" class="legend"><span class="chat">● 聊天</span><span class="skill">● 任务</span><span class="singing">● 唱歌</span><span class="dancing">● 跳舞</span><span class="focus">● 专注模式</span></div></div>
+        <div class="plot-controls">
+          <label>范围<select id="scope"><option value="all">五类联合</option><option value="chat">聊天内部</option><option value="skill">任务内部</option><option value="singing">唱歌内部</option><option value="dancing">跳舞内部</option><option value="focus">专注模式内部</option></select></label>
+          <label>Perplexity<select id="perplexity"><option>20</option><option selected>30</option><option>50</option></select></label>
+          <label>随机种子<select id="seed"><option selected>42</option><option>7</option></select></label>
+          <span class="shape-key">● 样例　△ 验证　□ 测试　◆ 锚点　★ 新句</span>
+        </div>
+        <div class="paired-plots">
+          <section class="model-plot"><h3>small <span class="small">512 维 · INT8</span></h3><div id="scatter" role="img" aria-label="small 五类意图交互 t-SNE 散点图"><div class="empty chart-empty">模型准备完成后生成散点图</div></div></section>
+          <section class="model-plot"><h3>large <span class="small">1024 维 · INT8</span></h3><div id="scatter-large" role="img" aria-label="large 五类意图交互 t-SNE 散点图"><div class="empty chart-empty">等待 large 模型</div></div></section>
+        </div>
+        <div id="selection" class="selection" aria-live="polite"><span class="small">点击散点或列表中的原句，查看所属集合与表达家族。</span></div>
+        <p class="plot-note">相同句子、参数、随机种子；两图分别拟合，坐标与朝向不能直接比较。二维距离不用于选锚点或分类。加入新句会改变布局；图不是准确率证明。</p>
+      </section>
+    </section>
+    <section class="analysis-section">
+      <div class="analysis-toolbar">
+        <div class="tabs" role="tablist" aria-label="分析结果">
+          <button type="button" id="tab-comparison" role="tab" aria-controls="panel-comparison" aria-selected="true">模型对比</button>
+          <button type="button" id="tab-anchors" role="tab" aria-controls="panel-anchors" aria-selected="false">锚点列表 <span id="anchor-count">—</span></button>
+          <button type="button" id="tab-confusions" role="tab" aria-controls="panel-confusions" aria-selected="false">易混淆案例 <span id="confusion-count">—</span></button>
+          <button type="button" id="tab-report" role="tab" aria-controls="panel-report" aria-selected="false">测试报告</button>
+          <button type="button" id="tab-real" role="tab" aria-controls="panel-real" aria-selected="false">真实 ASR 数据</button>
+          <button type="button" id="tab-feedback" role="tab" aria-controls="panel-feedback" aria-selected="false">纠错训练 <span id="feedback-count">0</span></button>
+        </div>
+        <div class="build-controls"><label for="detail-model">详情模型</label><select id="detail-model"><option value="small">small</option><option value="large" disabled>large</option></select><label for="anchor-k">每类锚点</label><select id="anchor-k"><option>10</option><option selected>15</option><option>20</option></select><button type="button" id="rebuild">两边重新分析</button></div>
+      </div>
+      <section id="panel-comparison" role="tabpanel" aria-labelledby="tab-comparison">
+        <div class="panel-heading"><p>同一套五类设定词、750 条案例和数据划分。聚类与推理指标分开比较，不按散点图是否紧凑选模型。</p><a href="/api/download/comparison.json" download>下载对照报告</a></div>
+        <p id="comparison-note" class="quality-note">等待两模型分析</p>
+        <div id="comparison-summary" class="table-wrap"></div>
+        <h3>轻量分类器对照</h3><p class="small">BGE 权重不变。裸分类与“温度校准 + 各意图拒识”分别报告；需澄清算未判对，不伪装成聊天。编码延迟见上表。</p>
+        <div id="classifier-comparison" class="table-wrap"></div>
+        <h3>五类标签在原始向量空间中的分布</h3><p class="small">轮廓系数越高，通常同类与异类越易区分；聊天可有多个子簇。类内余弦与聚类一致度不是模型排名。</p>
+        <div id="comparison-clusters" class="table-wrap"></div>
+        <h3>完整测试指标</h3><p class="small">向量方案拒识后回退聊天；分类器拒识输出需澄清，计为未判对。请同时比较聊天误触发与动作召回，不只看准确率。</p><div id="comparison-reports" class="table-wrap"></div>
+        <h3>两边预测不同的测试句</h3><p class="small">采用“测试报告”中的方案和阈值选择。</p><div id="comparison-differences" class="table-wrap"></div>
+        <details><summary>共用的原有模式设定词</summary><div id="comparison-routes" class="table-wrap"></div></details>
+      </section>
+      <section id="panel-anchors" role="tabpanel" aria-labelledby="tab-anchors" hidden>
+        <div class="panel-heading"><p id="anchor-method">在原始向量空间聚类 → 每簇选代表原句；只使用样例集。</p><a id="download-anchors" href="/api/download/anchors.candidate.yaml" download>下载候选锚点</a></div>
+        <div id="anchors-table" class="table-wrap"><div class="empty">等待分析</div></div>
+      </section>
+      <section id="panel-confusions" role="tabpanel" aria-labelledby="tab-confusions" hidden>
+        <div class="panel-heading"><p>同类近邻分数 − 异类近邻分数 &lt; 0.08。负值表示异类句更近；样例集采用留一法，不与自身比较。</p></div>
+        <div id="confusions-table" class="table-wrap"></div>
+      </section>
+      <section id="panel-report" role="tabpanel" aria-labelledby="tab-report" hidden>
+        <div class="panel-heading"><p id="dataset-summary">每类 150 条：样例 100、验证 20、测试 30。合成句仅用于离线比较。</p><div class="downloads"><a id="download-report" href="/api/download/report.json" download>下载报告</a><a id="download-cases" href="/api/download/cases.generated.yaml" download>下载案例</a></div></div>
+        <div id="quality-note" class="quality-note"></div>
+        <div id="report-summary" class="table-wrap"></div>
+        <div class="report-detail">
+          <div><div class="report-controls"><label>方案<select id="report-scheme"><option value="baseline">原有样例</option><option value="expanded" selected>扩充样例</option><option value="anchors">代表锚点</option><option value="classifier">轻量分类器</option></select></label><label>决策<select id="report-threshold"><option value="default">向量默认 / 分类器裸分类</option><option value="calibrated">验证集候选 / 分类器拒识策略</option></select></label></div><div id="matrix" class="table-wrap"></div><div id="class-metrics" class="table-wrap"></div></div>
+          <div><h3>测试集误判</h3><div id="report-errors" class="table-wrap"></div></div>
+        </div>
+        <div class="probe-report"><h3>手工标注探针</h3><p id="probe-note" class="small"></p><div id="probe-table" class="table-wrap"></div></div>
+        <details class="quality-details"><summary>检查验证/测试集的语义近重复</summary><div id="leaks-table" class="table-wrap"></div></details>
+        <h3>分类器参数与各意图接受门槛</h3><p id="classifier-note" class="quality-note"></p><div id="classifier-policy" class="table-wrap"></div>
+        <a id="download-classifier" href="/api/download/classifier.candidate.json" download>下载分类头参数（候选，不自动上线）</a>
+      </section>
+      <section id="panel-real" role="tabpanel" aria-labelledby="tab-real" hidden>
+        <div class="panel-heading"><p>导入人工标注的真实 ASR 原句，单独评测。也可补充训练与验证数据；不改原来的 750 条散点图或向量样例库。</p><a href="/api/download/real-dataset.template.json" download>下载空白 JSON 模板</a></div>
+        <details><summary>标注格式与数据隔离</summary><p class="help">顶层填写 dataset_id 和 cases 数组。每条有 id、text、mode（chat/skill/singing/dancing/focus）、split（train/validation/test）、family（会话或表达家族）、source（asr）。同会话或同表达家族放同一集合。只导入 test 也可评测；若补充 train，则 train 和 validation 五类各至少 5 条，建议各类 50 条以上。讨论、执行请求、停止、继续应人工区分；“不要”不一定等于聊天。程序不自动生成真实标签。</p><p class="help">上传文件为完整当前真实数据集，会替换上一批（上一份自动本地归档），不自动合并。曾用于测试的原句不可转为 train/validation。旧批次只用于回归，发布验收另采新批次。上传内容仅在本机保存，已排除 Git；仍建议先脱敏。</p></details>
+        <form id="real-form" class="real-form"><label for="real-file">选择 JSON 文件（可选，最大 500 KB）</label><input id="real-file" type="file" accept=".json,application/json"><label for="real-json">标注数据 JSON</label><textarea id="real-json" rows="7" maxlength="500000" spellcheck="false" placeholder='{"dataset_id":"asr-batch-001","cases":[]}'></textarea><button id="import-real" type="submit" disabled>导入并对比两模型</button></form>
+        <p id="real-note" class="quality-note">尚未导入真实数据；目前所有准确率均来自合成样例。</p>
+        <div id="real-counts" class="table-wrap"></div><div id="real-summary" class="table-wrap"></div>
+        <h3>真实留出集误判 / 需澄清</h3><div id="real-errors" class="table-wrap"></div>
+        <h3>语义近重复告警</h3><div id="real-leaks" class="table-wrap"></div>
+      </section>
+      <section id="panel-feedback" role="tabpanel" aria-labelledby="tab-feedback" hidden>
+        <div class="panel-heading"><p>发送原句后，在左侧确认正确意图并归档。训练集学习、验证集调门槛、回归留出只评测；正确案例也可归档，避免只有错误句。</p><div class="downloads"><a href="/api/download/feedback.json" download>下载纠错归档</a><a href="/api/download/feedback.training.json" download>下载训练对照</a></div></div>
+        <p id="feedback-note" class="quality-note">尚无纠错数据</p>
+        <div class="feedback-actions"><button id="train-feedback" type="button" disabled>用归档数据重新训练 small / large</button><span id="feedback-training-meta" class="small"></span></div>
+        <p class="help">少量纠错可补充现有合成训练/验证集，但成绩仍只能作回归参考。建议五类均覆盖，并分别收集“讨论、执行、拒绝、停止/继续”。真实部署另用独立 ASR 留出集验收；这里不会自动部署。</p>
+        <div id="feedback-counts" class="table-wrap"></div><div id="feedback-table" class="table-wrap"></div>
+        <h3>最近一次纠错训练前后（历史回归对照）</h3><p id="feedback-run-note" class="small"></p><div id="feedback-run" class="table-wrap"></div>
+        <h3>已生效纠错数据的回归留出</h3><div id="feedback-evaluation" class="table-wrap"></div>
+        <h3>回归留出误判 / 需澄清</h3><div id="feedback-errors" class="table-wrap"></div>
+        <h3>留出与训练的语义近重复告警</h3><div id="feedback-leaks" class="table-wrap"></div>
+      </section>
+    </section>
+    <footer><span>输出仅保存在 analysis_output；原有 routes.yaml 不变。</span><span id="built-at"></span></footer>
+  </main>
+</body>
+</html>
